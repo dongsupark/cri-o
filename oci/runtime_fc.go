@@ -88,8 +88,6 @@ type RuntimeFC struct {
 	RuntimeBase
 
 	ctx context.Context
-	//     client *ttrpc.Client
-	//     task   task.TaskService
 
 	firecrackerd *exec.Cmd            // firecrackerd process
 	fcClient     *fclient.Firecracker // the current active connection
@@ -97,20 +95,19 @@ type RuntimeFC struct {
 	machine    *firecracker.Machine
 	machineCID uint32
 	config     *FcConfig
-
-	//     ctrs map[string]fcContainerInfo
-}
-
-type fcContainerInfo struct {
-	//     cio *cio.ContainerIO
 }
 
 // NewRuntimeFC creates a new RuntimeFC instance
 func NewRuntimeFC(rb RuntimeBase) (RuntimeImpl, error) {
+	config, err := LoadConfig(defaultConfigPath)
+	if err != nil {
+		return nil, err
+	}
+
 	return &RuntimeFC{
 		RuntimeBase: rb,
 		ctx:         context.Background(),
-		//         ctrs:        make(map[string]fcContainerInfo),
+		config:      config,
 	}, nil
 }
 
@@ -246,56 +243,11 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 		return err
 	}
 
-	// Create IO fifos
-	//     containerIO, err := cio.NewContainerIO(c.ID(),
-	//         cio.WithNewFIFOs(fifoCrioDir, c.terminal, c.stdin))
-	//     if err != nil {
-	//         return err
-	//     }
-
-	//     defer func() {
-	//         if err != nil {
-	//             containerIO.Close()
-	//         }
-	//     }()
-
-	//     f, err := os.OpenFile(c.LogPath(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
-	//     if err != nil {
-	//         return err
-	//     }
-
-	//     containerIO.AddOutput("logfile", f, f)
-	//     containerIO.Pipe()
-
-	//     r.ctrs[c.ID()] = fcContainerInfo{
-	//         cio: containerIO,
-	//     }
-
-	//     defer func() {
-	//         if err != nil {
-	//             delete(r.ctrs, c.ID())
-	//         }
-	//     }()
-
 	return nil
 }
 
 func (r *RuntimeFC) startVM(c *Container) error {
 	r.fcClient = r.newFireClient()
-
-	// Prepare the command to run
-	args := []string{"-id", c.ID()}
-	if logrus.GetLevel() == logrus.DebugLevel {
-		args = append(args, "-debug")
-	}
-	args = append(args, "start")
-
-	rPath, err := r.path(c)
-	if err != nil {
-		return err
-	}
-
-	_ = rPath
 
 	if err := r.fcInit(fcTimeout); err != nil {
 		return err
@@ -305,60 +257,59 @@ func (r *RuntimeFC) startVM(c *Container) error {
 
 	r.fcSetVMRootfs(r.config.RootDrive)
 
+	cid, err := findNextAvailableVsockCID(r.ctx)
+	if err != nil {
+		return err
+	}
+
+	cfg := firecracker.Config{
+		SocketPath:      r.config.SocketPath,
+		VsockDevices:    []firecracker.VsockDevice{{Path: "root", CID: cid}},
+		KernelImagePath: r.config.KernelImagePath,
+		KernelArgs:      r.config.KernelArgs,
+	}
+
+	driveBuilder := firecracker.NewDrivesBuilder(r.config.RootDrive)
+
+	cfg.Drives = driveBuilder.Build()
+
+	cmdBuilder := firecracker.VMCommandBuilder{}.
+		WithBin(r.config.FirecrackerBinaryPath).
+		WithSocketPath(r.config.SocketPath).
+		Build(r.ctx)
+
+	machineOpts := []firecracker.Opt{
+		firecracker.WithProcessRunner(cmdBuilder),
+	}
+
+	vmmCtx, vmmCancel := context.WithCancel(context.Background())
+	defer vmmCancel()
+
+	var errMach error
+	r.machine, errMach = firecracker.NewMachine(vmmCtx, cfg, machineOpts...)
+	if errMach != nil {
+		return errMach
+	}
+	r.machineCID = cid
+
+	if err := r.machine.Start(vmmCtx); err != nil {
+		return err
+	}
+
 	if err := r.fcStartVM(); err != nil {
 		return err
 	}
 
 	return r.waitVMM(fcTimeout)
 
-	///
-
 	/*
-			cid, err := findNextAvailableVsockCID(r.ctx)
+			conn, err := dialVsock(r.ctx, cid, defaultVsockPort)
 			if err != nil {
+				r.stopVM()
 				return err
 			}
 
-				cfg := firecracker.Config{
-					SocketPath:      r.config.SocketPath,
-					VsockDevices:    []firecracker.VsockDevice{{Path: "root", CID: cid}},
-					KernelImagePath: r.config.KernelImagePath,
-					KernelArgs:      r.config.KernelArgs,
-				}
-
-					driveBuilder := firecracker.NewDrivesBuilder(r.config.RootDrive)
-
-					cfg.Drives = driveBuilder.Build()
-
-					cmdBuilder := firecracker.VMCommandBuilder{}.
-						WithBin(r.config.FirecrackerBinaryPath).
-						WithSocketPath(r.config.SocketPath).
-						Build(r.ctx)
-
-					machineOpts := []firecracker.Opt{
-						firecracker.WithProcessRunner(cmdBuilder),
-					}
-
-					vmmCtx, vmmCancel := context.WithCancel(context.Background())
-					defer vmmCancel()
-
-					r.machine, err = firecracker.NewMachine(vmmCtx, cfg, machineOpts...)
-					if err != nil {
-						return err
-					}
-					r.machineCID = cid
-
-					if err := r.machine.Start(vmmCtx); err != nil {
-						return err
-					}
-
-					conn, err := dialVsock(r.ctx, cid, defaultVsockPort)
-					if err != nil {
-						r.stopVM()
-						return err
-					}
-
-					_ = conn
+			_ = conn
 
 		return nil
 	*/
@@ -623,13 +574,13 @@ func (r *RuntimeFC) WaitContainerStateStopped(ctx context.Context, c *Container)
 
 // StopContainer stops a container. Timeout is given in seconds.
 func (r *RuntimeFC) StopContainer(ctx context.Context, c *Container, timeout int64) error {
+	// Lock the container
+	c.opLock.Lock()
+	defer c.opLock.Unlock()
+
 	return r.stopVM()
 
 	/*
-			// Lock the container
-			c.opLock.Lock()
-			defer c.opLock.Unlock()
-
 			// Cancel the context before returning to ensure goroutines are stopped.
 			ctx, cancel := context.WithCancel(r.ctx)
 			defer cancel()
