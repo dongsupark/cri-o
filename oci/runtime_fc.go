@@ -159,7 +159,11 @@ func (r *RuntimeFC) waitVMM(timeout int) error {
 }
 
 func (r *RuntimeFC) fcInit(timeout int) error {
+	_ = r.fcCleanup()
+
 	args := []string{"--api-sock", r.config.SocketPath}
+
+	fmt.Printf("running %v %v %v\n", r.config.FirecrackerBinaryPath, args[0], args[1])
 
 	cmd := exec.Command(r.config.FirecrackerBinaryPath, args...)
 	if err := cmd.Start(); err != nil {
@@ -171,10 +175,10 @@ func (r *RuntimeFC) fcInit(timeout int) error {
 	r.firecrackerd = cmd
 	r.fcClient = r.newFireClient()
 
-	if err := r.waitVMM(timeout); err != nil {
-		logrus.Errorf("fcInit failed:", err)
-		return err
-	}
+	//     if err := r.waitVMM(timeout); err != nil {
+	//         logrus.Errorf("fcInit failed:", err)
+	//         return err
+	//     }
 
 	//     r.state.set(apiReady)
 
@@ -247,15 +251,9 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 }
 
 func (r *RuntimeFC) startVM(c *Container) error {
+	_ = r.fcCleanup()
+
 	r.fcClient = r.newFireClient()
-
-	if err := r.fcInit(fcTimeout); err != nil {
-		return err
-	}
-
-	r.fcSetBootSource(r.config.KernelImagePath, r.config.KernelArgs)
-
-	r.fcSetVMRootfs(r.config.RootDrive)
 
 	cid, err := findNextAvailableVsockCID(r.ctx)
 	if err != nil {
@@ -299,6 +297,9 @@ func (r *RuntimeFC) startVM(c *Container) error {
 	if err := r.fcStartVM(); err != nil {
 		return err
 	}
+
+	r.fcSetBootSource(r.config.KernelImagePath, r.config.KernelArgs)
+	r.fcSetVMRootfs(r.config.RootDrive)
 
 	return r.waitVMM(fcTimeout)
 
@@ -646,6 +647,8 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
 
+	_ = r.fcCleanup()
+
 	//     cInfo, ok := r.ctrs[c.ID()]
 	//     if !ok {
 	//         return errors.New("Could not retrieve container information")
@@ -661,6 +664,17 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 
 	//     delete(r.ctrs, c.ID())
 
+	return nil
+}
+
+func (r *RuntimeFC) fcCleanup() error {
+	logrus.Infof("Cleaning up firecracker socket %s", r.config.SocketPath)
+
+	cmd := exec.Command("/bin/rm", "-f", r.config.SocketPath)
+	if err := cmd.Start(); err != nil {
+		logrus.Errorf("Error cleaning up firecracker", err)
+		return err
+	}
 	return nil
 }
 
