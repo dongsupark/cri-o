@@ -162,7 +162,8 @@ func New(runtimeTrustedPath string,
 
 // newRuntimeImpl creates a new Runtime implementation based on the version.
 func newRuntimeImpl(runtimeVersion string, rb RuntimeBase) (RuntimeImpl, error) {
-	return NewRuntimeOCI(rb)
+	// FIXME: selective run OCI, VM, or FC
+	return NewRuntimeFC(rb)
 }
 
 // Name returns the name of the OCI Runtime
