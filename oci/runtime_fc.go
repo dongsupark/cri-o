@@ -551,7 +551,7 @@ func (r *RuntimeFC) SignalContainer(c *Container, sig syscall.Signal) error {
 }
 
 // AttachContainer attaches IO to a running container.
-func (r *RuntimeFC) AttachContainer(c *Container, inputStream io.Reader, outputStream, errorStream io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
+func (r *RuntimeFC) AttachContainer(c *Container, inputStream io.Reader, outputStream, errorStream io.Writer, tty bool, resize <-chan remotecommand.TerminalSize) error {
 	return nil
 }
 
