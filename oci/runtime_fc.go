@@ -1,15 +1,12 @@
 package oci
 
 import (
-	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -30,8 +27,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	"k8s.io/client-go/tools/remotecommand"
-	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	utilexec "k8s.io/utils/exec"
 )
 
 const (
@@ -400,151 +395,19 @@ func (r *RuntimeFC) StartContainer(c *Container) error {
 		return err
 	}
 
-	// Spawn a goroutine waiting for the container to terminate. Once it
-	// happens, the container status is retrieved to be updated.
-	go func() {
-		r.wait(r.ctx, c.ID(), "")
-		r.UpdateContainerStatus(c)
-
-		c.state.Status = ContainerStateRunning
-	}()
+	c.state.Status = ContainerStateRunning
 
 	return nil
 }
 
 // ExecContainer prepares a streaming endpoint to execute a command in the container.
 func (r *RuntimeFC) ExecContainer(c *Container, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
-	exitCode, err := r.execContainer(c, cmd, 0, stdin, stdout, stderr, tty, resize)
-	if err != nil {
-		return err
-	}
-	if exitCode != 0 {
-		return &utilexec.CodeExitError{
-			Err:  errors.Errorf("error executing command %v, exit code %d", cmd, exitCode),
-			Code: int(exitCode),
-		}
-	}
-
 	return nil
 }
 
 // ExecSyncContainer execs a command in a container and returns it's stdout, stderr and return code.
 func (r *RuntimeFC) ExecSyncContainer(c *Container, command []string, timeout int64) (*ExecSyncResponse, error) {
-	var stdoutBuf, stderrBuf bytes.Buffer
-	//     stdout := cioutil.NewNopWriteCloser(&stdoutBuf)
-	//     stderr := cioutil.NewNopWriteCloser(&stderrBuf)
-
-	//     exitCode, err := r.execContainer(c, command, timeout, nil, stdout, stderr, c.terminal, nil)
-	//     if err != nil {
-	//         return nil, ExecSyncError{
-	//             ExitCode: -1,
-	//             Err:      errors.Wrapf(err, "ExecSyncContainer failed"),
-	//         }
-	//     }
-
-	return &ExecSyncResponse{
-		Stdout: stdoutBuf.Bytes(),
-		Stderr: stderrBuf.Bytes(),
-		//         ExitCode: exitCode,
-	}, nil
-}
-
-func (r *RuntimeFC) execContainer(c *Container, cmd []string, timeout int64, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) (exitCode int32, err error) {
-
-	// Cancel the context before returning to ensure goroutines are stopped.
-	ctx, cancel := context.WithCancel(r.ctx)
-	defer cancel()
-
-	// Generate a unique execID
-	execID := fcGenerateID()
-
-	// Create IO fifos
-	//     execIO, err := cio.NewExecIO(c.ID(), fifoGlobalDir, tty, stdin != nil)
-	//     if err != nil {
-	//         return -1, err
-	//     }
-	//     defer execIO.Close()
-
-	//     execIO.Attach(cio.AttachOptions{
-	//         Stdin:     stdin,
-	//         Stdout:    stdout,
-	//         Stderr:    stderr,
-	//         Tty:       tty,
-	//         StdinOnce: true,
-	//         CloseStdin: func() error {
-	//             return r.closeIO(ctx, c.ID(), execID)
-	//         },
-	//     })
-
-	pSpec := c.Spec().Process
-	pSpec.Args = cmd
-
-	defer func() {
-		if err != nil {
-			r.remove(ctx, c.ID(), execID)
-		}
-	}()
-
-	// Start the process
-	if err = r.start(ctx, c.ID(), execID); err != nil {
-		return -1, err
-	}
-
-	// Initialize terminal resizing if necessary
-	if resize != nil {
-		kubecontainer.HandleResizing(resize, func(size remotecommand.TerminalSize) {
-			if err := r.resizePty(ctx, c.ID(), execID, size); err != nil {
-				logrus.Warnf("Failed to resize terminal: %v", err)
-			}
-		})
-	}
-
-	timeoutDuration := time.Duration(timeout) * time.Second
-
-	var timeoutCh <-chan time.Time
-	if timeoutDuration == 0 {
-		// Do not set timeout if it's 0
-		timeoutCh = make(chan time.Time)
-	} else {
-		timeoutCh = time.After(timeoutDuration)
-	}
-
-	execCh := make(chan error)
-	go func() {
-		// Wait for the process to terminate
-		exitCode, _, err = r.wait(ctx, c.ID(), execID)
-		if err != nil {
-			execCh <- err
-		}
-
-		close(execCh)
-	}()
-
-	select {
-	case err = <-execCh:
-		if err != nil {
-			r.kill(ctx, c.ID(), execID, syscall.SIGKILL, false)
-			return -1, err
-		}
-	case <-timeoutCh:
-		r.kill(ctx, c.ID(), execID, syscall.SIGKILL, false)
-		<-execCh
-		return -1, errors.Errorf("ExecSyncContainer timeout (%v)", timeoutDuration)
-	}
-
-	// Delete the process
-	if err := r.remove(ctx, c.ID(), execID); err != nil {
-		return -1, err
-	}
-
-	return
-}
-
-// fcGenerateID generates a random unique id.
-func fcGenerateID() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return &ExecSyncResponse{}, nil
 }
 
 // UpdateContainer updates container resources
@@ -574,52 +437,6 @@ func (r *RuntimeFC) StopContainer(ctx context.Context, c *Container, timeout int
 	//     return r.stopVM()
 
 	return nil
-
-	/*
-			// Cancel the context before returning to ensure goroutines are stopped.
-			ctx, cancel := context.WithCancel(r.ctx)
-			defer cancel()
-
-			stopCh := make(chan error)
-			go func() {
-				if _, _, err := r.wait(ctx, c.ID(), ""); err != nil {
-					stopCh <- err
-				}
-
-				close(stopCh)
-			}()
-
-			var sig syscall.Signal
-
-			if timeout > 0 {
-				sig = c.GetStopSignalInt()
-				// Send a stopping signal to the container
-				if err := r.kill(ctx, c.ID(), "", sig, false); err != nil {
-					return err
-				}
-
-				timeoutDuration := time.Duration(timeout) * time.Second
-
-				err := r.waitCtrTerminate(sig, stopCh, timeoutDuration)
-				if err == nil {
-					return nil
-				}
-				logrus.Warnf("%v", err)
-			}
-
-			sig = syscall.SIGKILL
-			// Send a SIGKILL signal to the container
-			if err := r.kill(ctx, c.ID(), "", sig, false); err != nil {
-				return err
-			}
-
-			if err := r.waitCtrTerminate(sig, stopCh, killContainerTimeout); err != nil {
-				logrus.Errorf("%v", err)
-				return err
-			}
-
-		return nil
-	*/
 }
 
 func (r *RuntimeFC) stopVM() error {
@@ -643,15 +460,6 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 
 	_ = r.fcCleanup()
 
-	//     cInfo, ok := r.ctrs[c.ID()]
-	//     if !ok {
-	//         return errors.New("Could not retrieve container information")
-	//     }
-
-	//     if err := cInfo.cio.Close(); err != nil {
-	//         return err
-	//     }
-
 	if err := r.remove(r.ctx, c.ID(), ""); err != nil {
 		return err
 	}
@@ -660,8 +468,6 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 
 	return r.stopVM()
 	//     return nil
-
-	//     delete(r.ctrs, c.ID())
 }
 
 func (r *RuntimeFC) fcCleanup() error {
@@ -727,31 +533,6 @@ func (r *RuntimeFC) SignalContainer(c *Container, sig syscall.Signal) error {
 
 // AttachContainer attaches IO to a running container.
 func (r *RuntimeFC) AttachContainer(c *Container, inputStream io.Reader, outputStream, errorStream io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
-	// Initialize terminal resizing
-	kubecontainer.HandleResizing(resize, func(size remotecommand.TerminalSize) {
-		if err := r.resizePty(r.ctx, c.ID(), "", size); err != nil {
-			logrus.Warnf("Failed to resize terminal: %v", err)
-		}
-	})
-
-	//     cInfo, ok := r.ctrs[c.ID()]
-	//     if !ok {
-	//         return errors.New("Could not retrieve container information")
-	//     }
-
-	//     opts := cio.AttachOptions{
-	//         Stdin:     inputStream,
-	//         Stdout:    outputStream,
-	//         Stderr:    errorStream,
-	//         Tty:       tty,
-	//         StdinOnce: c.stdinOnce,
-	//         CloseStdin: func() error {
-	//             return r.closeIO(r.ctx, c.ID(), "")
-	//         },
-	//     }
-
-	//     cInfo.cio.Attach(opts)
-
 	return nil
 }
 
@@ -770,8 +551,7 @@ func (r *RuntimeFC) start(ctx context.Context, ctrID, execID string) error {
 }
 
 func (r *RuntimeFC) wait(ctx context.Context, ctrID, execID string) (int32, time.Time, error) {
-	//     return int32(resp.ExitStatus), resp.ExitedAt, nil
-	return int32(1), time.Now(), nil
+	return int32(0), time.Now(), nil
 }
 
 func (r *RuntimeFC) kill(ctx context.Context, ctrID, execID string, signal syscall.Signal, all bool) error {
@@ -779,13 +559,5 @@ func (r *RuntimeFC) kill(ctx context.Context, ctrID, execID string, signal sysca
 }
 
 func (r *RuntimeFC) remove(ctx context.Context, ctrID, execID string) error {
-	return nil
-}
-
-func (r RuntimeFC) resizePty(ctx context.Context, ctrID, execID string, size remotecommand.TerminalSize) error {
-	return nil
-}
-
-func (r *RuntimeFC) closeIO(ctx context.Context, ctrID, execID string) error {
 	return nil
 }
