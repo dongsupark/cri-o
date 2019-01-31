@@ -258,10 +258,9 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
 
-	// First thing, we need to start the runtime daemon
-	if err = r.startVM(c); err != nil {
-		return err
-	}
+	//     fmt.Printf("entering CreateContainer\n")
+
+	r.fcClient = r.newFireClient()
 
 	c.state.Status = ContainerStateCreated
 
@@ -271,7 +270,7 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 func (r *RuntimeFC) startVM(c *Container) error {
 	_ = r.fcCleanup()
 
-	r.fcClient = r.newFireClient()
+	//     fmt.Printf("entering startVM\n")
 
 	// temporarily disable vsock, because of "exit 148" issue.
 
@@ -391,7 +390,9 @@ func (r *RuntimeFC) StartContainer(c *Container) error {
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
 
-	if err := r.start(r.ctx, c.ID(), ""); err != nil {
+	//     fmt.Printf("entering StartContainer\n")
+
+	if err := r.startVM(c); err != nil {
 		return err
 	}
 
@@ -438,8 +439,9 @@ func (r *RuntimeFC) StopContainer(ctx context.Context, c *Container, timeout int
 		return err
 	}
 
-	//     return r.stopVM()
+	//     fmt.Printf("StopC: doing nothing\n")
 
+	//     return r.stopVM()
 	return nil
 }
 
@@ -470,10 +472,19 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 
 	c.state.Status = ContainerStateStopped
 
+	//     logrus.Infof("DeleteC: trying to run stopVM")
+	//     fmt.Printf("DeleteC: trying to run stopVM\n")
+
 	// NOTE: ignore error, since we should continue removing the container
 	// on the cri-o side, even if stopVM could not kill the firecracker process.
-	if err := r.stopVM(); err != nil {
-		logrus.Warnf("stopVM failed, but continue removing the container: %v", err)
+	for i := 0; i < 3; i++ {
+		if err := r.stopVM(); err != nil {
+			logrus.Warnf("stopVM failed, but continue removing the container: %v", err)
+			fmt.Printf("stopVM failed, but continue removing the container: %v\n", err)
+			time.Sleep(500 * time.Millisecond)
+		} else {
+			break
+		}
 	}
 	return nil
 }
