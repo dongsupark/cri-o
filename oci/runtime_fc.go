@@ -136,6 +136,27 @@ func (r *RuntimeFC) newFireClient() *fclient.Firecracker {
 	return httpClient
 }
 
+func (r *RuntimeFC) vmRunning() bool {
+	resp, err := r.client().Operations.DescribeInstance(nil)
+	if err != nil {
+		return false
+	}
+
+	// Be explicit
+	switch resp.Payload.State {
+	case fcmodels.InstanceInfoStateStarting:
+		// Unsure what we should do here
+		logrus.Errorf("unexpected-state %v", fcmodels.InstanceInfoStateStarting)
+		return false
+	case fcmodels.InstanceInfoStateRunning:
+		return true
+	case fcmodels.InstanceInfoStateUninitialized, fcmodels.InstanceInfoStateHalting, fcmodels.InstanceInfoStateHalted:
+		return false
+	default:
+		return false
+	}
+}
+
 // waitVMM waits for the VMM to be up and running.
 func (r *RuntimeFC) waitVMM(timeout int) error {
 	if timeout < 0 {
@@ -247,6 +268,8 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 		return err
 	}
 
+	fmt.Printf("end of CreateContainer\n")
+
 	return nil
 }
 
@@ -300,8 +323,10 @@ func (r *RuntimeFC) startVM(c *Container) error {
 		return err
 	}
 
-	//     if err := r.fcStartVM(); err != nil {
-	//         return err
+	//     if !r.vmRunning() {
+	//         if err := r.fcStartVM(); err != nil {
+	//             return err
+	//         }
 	//     }
 
 	//     return r.waitVMM(fcTimeout)
