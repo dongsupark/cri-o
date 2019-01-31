@@ -25,7 +25,6 @@ import (
 	fcops "github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 	httptransport "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-	"github.com/mdlayher/vsock"
 	rspec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -218,6 +217,7 @@ func (r *RuntimeFC) fcSetVMRootfs(path string) error {
 	driveParams := fcops.NewPutGuestDriveByIDParams()
 	driveParams.SetDriveID(driveID)
 	isReadOnly := false
+
 	//Add it as a regular block device
 	//This allows us to use a paritioned root block device
 	isRootDevice := false
@@ -265,6 +265,9 @@ func (r *RuntimeFC) startVM(c *Container) error {
 		VsockDevices:    []firecracker.VsockDevice{{Path: "root", CID: cid}},
 		KernelImagePath: r.config.KernelImagePath,
 		KernelArgs:      r.config.KernelArgs,
+		MachineCfg: fcmodels.MachineConfiguration{
+			MemSizeMib: 128,
+		},
 	}
 
 	driveBuilder := firecracker.NewDrivesBuilder(r.config.RootDrive)
@@ -290,6 +293,9 @@ func (r *RuntimeFC) startVM(c *Container) error {
 	}
 	r.machineCID = cid
 
+	r.fcSetBootSource(r.config.KernelImagePath, r.config.KernelArgs)
+	r.fcSetVMRootfs(r.config.RootDrive)
+
 	if err := r.machine.Start(vmmCtx); err != nil {
 		return err
 	}
@@ -298,22 +304,7 @@ func (r *RuntimeFC) startVM(c *Container) error {
 		return err
 	}
 
-	r.fcSetBootSource(r.config.KernelImagePath, r.config.KernelArgs)
-	r.fcSetVMRootfs(r.config.RootDrive)
-
 	return r.waitVMM(fcTimeout)
-
-	/*
-			conn, err := dialVsock(r.ctx, cid, defaultVsockPort)
-			if err != nil {
-				r.stopVM()
-				return err
-			}
-
-			_ = conn
-
-		return nil
-	*/
 }
 
 func (r *RuntimeFC) fcStartVM() error {
@@ -372,34 +363,6 @@ func findNextAvailableVsockCID(ctx context.Context) (uint32, error) {
 	}
 
 	return 0, fmt.Errorf("cannot find a vsock context id")
-}
-
-func dialVsock(ctx context.Context, contextID uint32, port uint32) (net.Conn, error) {
-	// VM should start within 200ms, vsock dial will make retries at 100ms, 200ms, 400ms, 800ms and 1.6s
-	const (
-		retryCount      = 5
-		initialDelay    = 100 * time.Millisecond
-		delayMultiplier = 2
-	)
-
-	var lastErr error
-	var currentDelay = initialDelay
-	for i := 1; i <= retryCount; i++ {
-		conn, err := vsock.Dial(contextID, port)
-		if err == nil {
-			fmt.Printf("Dial succeeded\n")
-			return conn, nil
-		}
-
-		fmt.Printf("vsock dial failed (attempt %d of %d), will retry in %s\n", i, retryCount, currentDelay)
-		time.Sleep(currentDelay)
-
-		lastErr = err
-		currentDelay *= delayMultiplier
-	}
-
-	fmt.Printf("vsock dial failed")
-	return nil, lastErr
 }
 
 // StartContainer starts a container.
