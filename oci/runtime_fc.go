@@ -434,6 +434,10 @@ func (r *RuntimeFC) StopContainer(ctx context.Context, c *Container, timeout int
 
 	c.state.Status = ContainerStateStopped
 
+	if err := waitContainerStop(r.ctx, c, killContainerTimeout, false); err != nil {
+		return err
+	}
+
 	//     return r.stopVM()
 
 	return nil
@@ -466,8 +470,12 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 
 	c.state.Status = ContainerStateStopped
 
-	return r.stopVM()
-	//     return nil
+	// NOTE: ignore error, since we should continue removing the container
+	// on the cri-o side, even if stopVM could not kill the firecracker process.
+	if err := r.stopVM(); err != nil {
+		logrus.Warnf("stopVM failed, but continue removing the container: %v", err)
+	}
+	return nil
 }
 
 func (r *RuntimeFC) fcCleanup() error {
