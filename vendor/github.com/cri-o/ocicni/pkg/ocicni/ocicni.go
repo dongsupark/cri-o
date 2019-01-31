@@ -319,19 +319,22 @@ func (plugin *cniNetworkPlugin) SetUpPod(podNetwork PodNetwork) (cnitypes.Result
 	plugin.podLock(podNetwork).Lock()
 	defer plugin.podUnlock(podNetwork)
 
-	_, err := plugin.loNetwork.addToNetwork(podNetwork)
-	if err != nil {
-		logrus.Errorf("Error while adding to cni lo network: %s", err)
-		return nil, err
-	}
+	//     _, err := plugin.loNetwork.addToNetwork(podNetwork)
+	//     if err != nil {
+	//         logrus.Errorf("Error while adding to cni lo network: %s", err)
+	//         return nil, err
+	//     }
 
-	result, err := plugin.getDefaultNetwork().addToNetwork(podNetwork)
-	if err != nil {
-		logrus.Errorf("Error while adding to cni network: %s", err)
-		return nil, err
-	}
+	//     result, err := plugin.getDefaultNetwork().addToNetwork(podNetwork)
+	//     if err != nil {
+	//         logrus.Errorf("Error while adding to cni network: %s", err)
+	//         return nil, err
+	//     }
 
-	return result, err
+	//     return result, err
+
+	//     return cnitypes.Result{}, nil
+	return nil, nil
 }
 
 func (plugin *cniNetworkPlugin) TearDownPod(podNetwork PodNetwork) error {

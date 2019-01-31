@@ -268,8 +268,6 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 		return err
 	}
 
-	fmt.Printf("end of CreateContainer\n")
-
 	return nil
 }
 
@@ -278,19 +276,23 @@ func (r *RuntimeFC) startVM(c *Container) error {
 
 	r.fcClient = r.newFireClient()
 
-	cid, err := findNextAvailableVsockCID(r.ctx)
-	if err != nil {
-		return err
-	}
+	// temporarily disable vsock, because of "exit 148" issue.
+
+	//     cid, err := findNextAvailableVsockCID(r.ctx)
+	//     if err != nil {
+	//         return err
+	//     }
 
 	cfg := firecracker.Config{
-		SocketPath:      r.config.SocketPath,
-		VsockDevices:    []firecracker.VsockDevice{{Path: "root", CID: cid}},
+		SocketPath: r.config.SocketPath,
+		//         VsockDevices:    []firecracker.VsockDevice{{Path: "root", CID: cid}},
 		KernelImagePath: r.config.KernelImagePath,
 		KernelArgs:      r.config.KernelArgs,
 		MachineCfg: fcmodels.MachineConfiguration{
 			MemSizeMib: 128,
 		},
+		Debug:             true,
+		DisableValidation: true,
 	}
 
 	driveBuilder := firecracker.NewDrivesBuilder(r.config.RootDrive)
@@ -302,19 +304,15 @@ func (r *RuntimeFC) startVM(c *Container) error {
 		WithSocketPath(r.config.SocketPath).
 		Build(r.ctx)
 
-	machineOpts := []firecracker.Opt{
-		firecracker.WithProcessRunner(cmdBuilder),
-	}
-
 	vmmCtx, vmmCancel := context.WithCancel(context.Background())
 	defer vmmCancel()
 
 	var errMach error
-	r.machine, errMach = firecracker.NewMachine(vmmCtx, cfg, machineOpts...)
+	r.machine, errMach = firecracker.NewMachine(vmmCtx, cfg, firecracker.WithProcessRunner(cmdBuilder))
 	if errMach != nil {
 		return errMach
 	}
-	r.machineCID = cid
+	//     r.machineCID = cid
 
 	r.fcSetBootSource(r.config.KernelImagePath, r.config.KernelArgs)
 	r.fcSetVMRootfs(r.config.RootDrive)
@@ -329,9 +327,7 @@ func (r *RuntimeFC) startVM(c *Container) error {
 	//         }
 	//     }
 
-	//     return r.waitVMM(fcTimeout)
-
-	return nil
+	return r.waitVMM(fcTimeout)
 }
 
 func (r *RuntimeFC) fcStartVM() error {
