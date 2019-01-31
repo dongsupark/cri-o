@@ -565,7 +565,9 @@ func (r *RuntimeFC) StopContainer(ctx context.Context, c *Container, timeout int
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
 
-	return r.stopVM()
+	//     return r.stopVM()
+
+	return nil
 
 	/*
 			// Cancel the context before returning to ensure goroutines are stopped.
@@ -648,9 +650,10 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 		return err
 	}
 
-	//     delete(r.ctrs, c.ID())
+	return r.stopVM()
+	//     return nil
 
-	return nil
+	//     delete(r.ctrs, c.ID())
 }
 
 func (r *RuntimeFC) fcCleanup() error {
