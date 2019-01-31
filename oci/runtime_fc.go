@@ -300,11 +300,13 @@ func (r *RuntimeFC) startVM(c *Container) error {
 		return err
 	}
 
-	if err := r.fcStartVM(); err != nil {
-		return err
-	}
+	//     if err := r.fcStartVM(); err != nil {
+	//         return err
+	//     }
 
-	return r.waitVMM(fcTimeout)
+	//     return r.waitVMM(fcTimeout)
+
+	return nil
 }
 
 func (r *RuntimeFC) fcStartVM() error {
