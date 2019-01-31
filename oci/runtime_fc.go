@@ -268,6 +268,8 @@ func (r *RuntimeFC) CreateContainer(c *Container, cgroupParent string) (err erro
 		return err
 	}
 
+	c.state.Status = ContainerStateCreated
+
 	return nil
 }
 
@@ -403,6 +405,8 @@ func (r *RuntimeFC) StartContainer(c *Container) error {
 	go func() {
 		r.wait(r.ctx, c.ID(), "")
 		r.UpdateContainerStatus(c)
+
+		c.state.Status = ContainerStateRunning
 	}()
 
 	return nil
@@ -565,6 +569,8 @@ func (r *RuntimeFC) StopContainer(ctx context.Context, c *Container, timeout int
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
 
+	c.state.Status = ContainerStateStopped
+
 	//     return r.stopVM()
 
 	return nil
@@ -650,6 +656,8 @@ func (r *RuntimeFC) DeleteContainer(c *Container) error {
 		return err
 	}
 
+	c.state.Status = ContainerStateStopped
+
 	return r.stopVM()
 	//     return nil
 
@@ -682,6 +690,8 @@ func (r *RuntimeFC) PauseContainer(c *Container) error {
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
 
+	c.state.Status = ContainerStatePaused
+
 	return nil
 }
 
@@ -690,6 +700,8 @@ func (r *RuntimeFC) UnpauseContainer(c *Container) error {
 	// Lock the container
 	c.opLock.Lock()
 	defer c.opLock.Unlock()
+
+	c.state.Status = ContainerStateRunning
 
 	return nil
 }
